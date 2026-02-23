@@ -1,0 +1,164 @@
+---
+title: "Identifying Underserved Communities in the Colombo District, Sri Lanka"
+author: "Nimesh Akalanka"
+date: today
+format: html
+resource embedding: embed
+---
+
+# Introduction
+
+This study is conducted for the Colombo district of Sri Lanka, which is the most highly urbanized region of the country. This study consider the District Secretariat Divisions (DSDs) in Colombo district as the spatial units of the analysis.
+
+
+```{r data_loading, warning=FALSE, message=FALSE}
+# Load necessary libraries
+library(sf)
+library(dplyr)
+library(tmap)
+library(terra)
+
+# Select an projected coordinate system
+utm_crs <- 32644
+
+# Set an Output file path
+output_dir <- "output"
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+gpkg_path <- file.path(output_dir, "output_layers.gpkg")
+
+# Load Sri Lankan GND boundaries
+sl_gnds <- st_read("data/sl_gnds.shp", quiet = TRUE) %>%
+  st_make_valid() %>%
+  st_transform(utm_crs)
+
+# Consider only Colombo district for this analysis
+names(sl_gnds)
+unique(sl_gnds$DISTRICT_N)
+
+cmb_gnds     <- sl_gnds %>% filter(DISTRICT_N == "Colombo")
+cmb_boundary <- st_union(cmb_gnds)
+
+# Read the census population data from census csv file
+sl_pop  <- read.csv("data/sl_population_2024.csv")
+cmb_pop <- sl_pop %>% filter(District_Name == "Colombo")
+
+# Join the census population data to the Colombo GNDs
+# Consider both the GND and DSD names
+cmb_gnds <- cmb_gnds %>%
+  mutate(GND_N = trimws(toupper(GND_N)),
+         DSD_N = trimws(toupper(DSD_N))) %>%
+  left_join(
+    cmb_pop %>%
+      mutate(GND_Name = trimws(toupper(GND_Name)),
+             DSD_Name = trimws(toupper(DSD_Name))) %>%
+      select(DSD_Name, GND_Name, Male, Female, Total),
+    by = c("DSD_N" = "DSD_Name", "GND_N" = "GND_Name")
+  ) %>%
+  mutate(GND_N = tools::toTitleCase(tolower(GND_N)),
+         DSD_N = tools::toTitleCase(tolower(DSD_N)),
+         Total = as.numeric(gsub(",", "", trimws(Total))),
+         Male   = as.numeric(gsub(",", "", trimws(Male))),
+         Female = as.numeric(gsub(",", "", trimws(Female))),
+         area_sqkm = as.numeric(st_area(geometry)) / 1e6)
+
+# Check how many GNDs were successfully matched
+cat("GNDs matched to population data:",
+    sum(!is.na(cmb_gnds$Total)), "of", nrow(cmb_gnds), "\n")
+
+# Disolve GNDs to DSDs for the analysis
+cmb_dsds <- cmb_gnds %>%
+  group_by(DSD_N) %>%
+  summarise(
+    Male = sum(Male, na.rm = TRUE),
+    Female = sum(Female, na.rm = TRUE),
+    Total = sum(Total, na.rm = TRUE),
+    area_sqkm = sum(area_sqkm, na.rm =TRUE),
+    geometry = st_union(geometry), .groups = "drop")
+
+# Import Colombo buildings data as polygons
+cmb_bld_poly <- st_read("data/sl_buildings.shp", quiet = TRUE) %>%
+  st_transform(utm_crs) %>%
+  st_intersection(cmb_boundary)
+
+# Import Colombo POI data as points
+cmb_poi <- st_read("data/sl_pois.shp", quiet = TRUE) %>%
+  st_transform(utm_crs) %>%
+  st_intersection(cmb_boundary)
+
+# Convert polygon buildings to points
+cmb_bld_points <- st_centroid(cmb_bld_poly)
+
+# Save the files to GeoPackage
+st_write(cmb_dsds, gpkg_path, layer = "cmb_dsds", delete_layer = TRUE, quiet = TRUE)
+st_write(cmb_bld_poly, gpkg_path, layer = "cmb_buildings_polygon", delete_layer = TRUE, quiet = TRUE)
+st_write(cmb_bld_points, gpkg_path, layer = "cmb_buildings_points", delete_layer = TRUE, quiet = TRUE)
+st_write(cmb_poi, gpkg_path, layer = "cmb_poi", delete_layer = TRUE, quiet = TRUE)
+
+# Show the information about the loaded buildings and POI data
+cat("Number of DSDs loaded:", nrow(cmb_dsds), "\n")
+cat("Buildings loaded:", nrow(cmb_bld_points), "\n")
+cat("POIs loaded:", nrow(cmb_poi), "\n")
+
+# Plot the Initial data
+tm_shape(cmb_dsds) +
+  tm_polygons("Total", palette = "Blues", title = "Population") +
+  tm_shape(cmb_bld_poly) +
+  tm_polygons(size = 0.1, col = "red", title = "Buildings") +
+  tm_shape(cmb_poi) +
+  tm_dots(size = 0.1, col = "green", title = "POIs") +
+  tm_layout(title = "Colombo District: Population, Buildings, and POIs", legend.outside = TRUE)
+```
+
+# Spatial Regression Analysis at DSD Level
+
+Identify DSDs that are statistically underserved in amenity access relative to their population density, building density, and spatial spillover effects from neighboring DSDs.
+
+```{r spatial_regression, warning=False}
+library(tidyr)
+
+# Count POIs per each DSD
+poi_per_dsd <- st_join(
+  cmb_dsds %>% select(DSD_N),
+  cmb_poi %>% select(geometry),
+  join = st_intersects,
+  left = TRUE
+) %>%
+  st_drop_geometry() %>%
+  group_by(DSD_N) %>%
+  summarise(poi_count = n(), .groups = "drop")
+
+# Count Building per each DSD
+bld_per_dsd <- st_join(
+  cmb_dsds %>% select(DSD_N),
+  cmb_bld_points %>% select(geometry),
+  join = st_intersects,
+  left = TRUE
+) %>%
+  st_drop_geometry() %>%
+  group_by(DSD_N) %>%
+  summarise(building_count = n(), .groups = "drop")
+
+# Join the counts back to the DSD data file
+cmb_dsds_bld_poi <- cmb_dsds %>%
+  left_join(poi_per_dsd, by = "DSD_N") %>%
+  left_join(bld_per_dsd, by = "DSD_N") %>%
+  mutate(
+    poi_count      = replace_na(poi_count, 0L),
+    building_count = replace_na(building_count, 0L),
+    pop_density  = Total / area_sqkm,                       
+    bld_density  = building_count / area_sqkm,             
+    poi_per_1000 = ifelse(Total > 0, (poi_count / Total) * 1000, NA_real_),                       
+    poi_per_sqkm = poi_count / area_sqkm,                   
+    log_pop_dens = log1p(pop_density),
+    log_bld_dens = log1p(bld_density),
+    log_poi_p1k  = log1p(poi_per_1000),
+    log_poi_sqkm = log1p(poi_per_sqkm)
+  ) %>%
+  filter(!is.na(Total), Total > 0)
+
+print(cmb_dsds_bld_poi %>% st_drop_geometry() %>% 
+  select(DSD_N, Total, pop_density, poi_count, poi_per_1000, bld_density))
+
+# Save the file to GeoPackage
+st_write(cmb_dsds_bld_poi, gpkg_path, layer = "cmb_dsds_bld_poi", delete_layer = TRUE, quiet = TRUE)
+```
