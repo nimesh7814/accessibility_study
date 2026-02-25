@@ -1,27 +1,76 @@
 ---
-title: "Identifying Underserved Communities in the Colombo District, Sri Lanka"
+title: "Colombo Amenity Distribution: Point Pattern Analysis & Spatial Regression"
 author: "Nimesh Akalanka"
 date: today
-format: html
-resource embedding: embed
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-float: true
+    code-fold: false
+    code-tools: true
+    theme: cosmo
+    self-contained: true
+execute:
+  warning: false
+  message: false
+  echo: true
 ---
 
-# Introduction
+# 1 Data Loading & Preparation
 
-This study is conducted for the Colombo district of Sri Lanka, which is the most highly urbanized region of the country. This study consider the District Secretariat Divisions (DSDs) in Colombo district as the spatial units of the analysis.
+These steps include the preparation of spatial data for the analysis of Colombo District. The task involves loading relevant datasets, converting the coordinate system to EPSG:32644 for proper dimension and area calculations, and merging demographic data with building information. The goal is to calculate attributes related to population demographics, housing, road infrastructure, and building area.
 
+- **Population Groups:**
+  - `Population_0_14`: Number of people aged 0-14.
+  - `Population_15_59`: Number of people aged 15-59.
+  - `Population_60_64`: Number of people aged 60-64.
+  - `Population_Above_65`: Number of people aged above 65.
+  - `Male`: Total number of males.
+  - `Female`: Total number of females.
+  - `Total_Population`: Total number of people (Male + Female).
 
-```{r data_loading, warning=FALSE, message=FALSE}
+- **Housing and Employment:**
+  - `Occupied_Housing_Units`: Number of occupied housing units.
+  - `Poverty_Percentage`: Percentage of the population living in poverty.
+  - `Unemployment_Rate`: Unemployment rate in the area.
+
+- **Infrastructure:**
+  - `Road_Density`: Density of roads in the area.
+  - `Road_Length`: Total length of roads in the area.
+
+- **Geospatial Calculations:**
+  - `Population_Density`: Population density per square kilometer.
+  - `Building_Area`: Area of buildings (units: square meters)
+
+Furthermore all the datasets are clipped in to the Colombo district boundary to ensure that the analysis is focused on the relevant geographic area.
+
+```{r data_loading}
 # Load necessary libraries
 library(sf)
 library(dplyr)
+library(tidyr)
+library(ggplot2)
 library(tmap)
 library(terra)
+library(spatstat)
+library(spdep)
+library(spatialreg)
+library(knitr)
+library(kableExtra)
+library(patchwork)
 
-# Select an projected coordinate system
+# Improve figure clarity in rendered output
+knitr::opts_chunk$set(
+  fig.align = "center",
+  fig.width = 9,
+  fig.height = 6,
+  dpi = 180,
+  out.width = "100%"
+)
+
+# Select an projected coordinate system and set up the output directory
 utm_crs <- 32644
-
-# Set an Output file path
 output_dir <- "output"
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 gpkg_path <- file.path(output_dir, "output_layers.gpkg")
@@ -35,130 +84,408 @@ sl_gnds <- st_read("data/sl_gnds.shp", quiet = TRUE) %>%
 names(sl_gnds)
 unique(sl_gnds$DISTRICT_N)
 
-cmb_gnds     <- sl_gnds %>% filter(DISTRICT_N == "Colombo")
+cmb_gnds <- sl_gnds %>% filter(DISTRICT_N == "Colombo")
 cmb_boundary <- st_union(cmb_gnds)
 
 # Read the census population data from census csv file
-sl_pop  <- read.csv("data/sl_population_2024.csv")
-cmb_pop <- sl_pop %>% filter(District_Name == "Colombo")
+cmb_census <- read.csv("data/cmb_census_2024.csv")
 
 # Join the census population data to the Colombo GNDs
 # Consider both the GND and DSD names
 cmb_gnds <- cmb_gnds %>%
-  mutate(GND_N = trimws(toupper(GND_N)),
-         DSD_N = trimws(toupper(DSD_N))) %>%
+  mutate(
+    GND_N = trimws(toupper(GND_N)),
+    DSD_N = trimws(toupper(DSD_N))
+  ) %>%
   left_join(
-    cmb_pop %>%
-      mutate(GND_Name = trimws(toupper(GND_Name)),
-             DSD_Name = trimws(toupper(DSD_Name))) %>%
-      select(DSD_Name, GND_Name, Male, Female, Total),
+    cmb_census %>%
+      mutate(
+        GND_Name = trimws(toupper(GND_Name)),
+        DSD_Name = trimws(toupper(DSD_Name)),
+        AG_0_14 = as.numeric(gsub(",", "", trimws(AG_0_14))),       
+        AG_15_59 = as.numeric(gsub(",", "", trimws(AG_15_59))),
+        AG_60_64 = as.numeric(gsub(",", "", trimws(AG_60_64))),
+        AG_65_and_above = as.numeric(gsub(",", "", trimws(AG_65_and_above))),
+        Male = as.numeric(gsub(",", "", trimws(Male))),
+        Female = as.numeric(gsub(",", "", trimws(Female))),
+        Total = as.numeric(gsub(",", "", trimws(Total))),
+        Occupied_Housing_Units = as.numeric(gsub(",", "", trimws(Occupied_Housing_Units))),
+        Poverty_Percentage = as.numeric(gsub(",", "", trimws(Poverty_Percentage))),
+        Unemployment_Rate = as.numeric(gsub(",", "", trimws(Unemployment_Rate))),
+        Road_Density = as.numeric(gsub(",", "", trimws(Road_Density))),
+        Road_Length = as.numeric(gsub(",", "", trimws(Road_Length)))
+      ) %>%
+      select(
+        DSD_Name, GND_Name, AG_0_14, AG_15_59, AG_60_64, AG_65_and_above, Male, Female, Total,
+        Occupied_Housing_Units, Poverty_Percentage, Unemployment_Rate, Road_Density, Road_Length
+      ),
     by = c("DSD_N" = "DSD_Name", "GND_N" = "GND_Name")
   ) %>%
-  mutate(GND_N = tools::toTitleCase(tolower(GND_N)),
-         DSD_N = tools::toTitleCase(tolower(DSD_N)),
-         Total = as.numeric(gsub(",", "", trimws(Total))),
-         Male   = as.numeric(gsub(",", "", trimws(Male))),
-         Female = as.numeric(gsub(",", "", trimws(Female))),
-         area_sqkm = as.numeric(st_area(geometry)) / 1e6)
+  mutate(
+    GND_N = tools::toTitleCase(tolower(GND_N)),
+    DSD_N = tools::toTitleCase(tolower(DSD_N)),
+    Area_sqkm = as.numeric(st_area(geometry)) / 1e6,           
+    Pop_density_sqkm = Total / Area_sqkm
+  )
 
 # Check how many GNDs were successfully matched
-cat("GNDs matched to population data:",
-    sum(!is.na(cmb_gnds$Total)), "of", nrow(cmb_gnds), "\n")
+cat("GNDs with population data:", sum(!is.na(cmb_gnds$Total)), "of", nrow(cmb_gnds), "\n")
 
-# Disolve GNDs to DSDs for the analysis
-cmb_dsds <- cmb_gnds %>%
-  group_by(DSD_N) %>%
-  summarise(
-    Male = sum(Male, na.rm = TRUE),
-    Female = sum(Female, na.rm = TRUE),
-    Total = sum(Total, na.rm = TRUE),
-    area_sqkm = sum(area_sqkm, na.rm =TRUE),
-    geometry = st_union(geometry), .groups = "drop")
-
-# Import Colombo buildings data as polygons
-cmb_bld_poly <- st_read("data/sl_buildings.shp", quiet = TRUE) %>%
-  st_transform(utm_crs) %>%
+# Load Sri Lankan Building footprints
+cmb_build <- st_read("data/sl_buildings.shp", quiet = TRUE) %>%
+  st_transform(utm_crs) %>% 
   st_intersection(cmb_boundary)
 
+# Calculate total building footprint area per GND (Unit: square meters)
+building_area_by_gnd <- cmb_build %>%
+  mutate(building_area = as.numeric(st_area(.))) %>% 
+  st_join(cmb_gnds %>% select(GND_N)) %>%  
+  st_drop_geometry() %>%  
+  group_by(GND_N) %>% 
+  summarise(Building_area = sum(building_area, na.rm = TRUE), .groups = "drop")
+
+# Join building area back to cmb_gnds 
+cmb_gnds <- cmb_gnds %>%
+  left_join(building_area_by_gnd, by = "GND_N") %>%
+  mutate(Building_area = coalesce(Building_area, 0))
+
+# Save the file to GeoPackage
+st_write(cmb_build, gpkg_path, layer = "cmb_build", delete_layer = TRUE, quiet = TRUE)
+
+# Show the information about the loaded buildings and POI data
+cat("Number of GNDs loaded:", nrow(cmb_gnds), "\n")
+```
+
+In this study mainly 02 main amenity categories are considered in the OSM dataset under the fclass attribute:
+
+- **Education Facilities:**
+  - `school`
+  - `university`
+  - `college`
+  - `kindergarten`
+
+- **Healthcare Facilites:**
+  - `hospital`
+  - `clinic`
+  - `pharmacy`
+  - `doctors`
+  - `dentist`
+  - `veterinary`
+  - `nursing_home`
+
+Then other POI categories are filtered out and only the above two categories are retained for the analysis. 
+
+```{r classify_pois}
 # Import Colombo POI data as points
 cmb_poi <- st_read("data/sl_pois.shp", quiet = TRUE) %>%
   st_transform(utm_crs) %>%
   st_intersection(cmb_boundary)
 
-# Convert polygon buildings to points
-cmb_bld_points <- st_centroid(cmb_bld_poly)
+# Inspect the POI attribute names
+print(names(cmb_poi))
 
-# Save the files to GeoPackage
-st_write(cmb_dsds, gpkg_path, layer = "cmb_dsds", delete_layer = TRUE, quiet = TRUE)
-st_write(cmb_bld_poly, gpkg_path, layer = "cmb_buildings_polygon", delete_layer = TRUE, quiet = TRUE)
-st_write(cmb_bld_points, gpkg_path, layer = "cmb_buildings_points", delete_layer = TRUE, quiet = TRUE)
-st_write(cmb_poi, gpkg_path, layer = "cmb_poi", delete_layer = TRUE, quiet = TRUE)
-
-# Show the information about the loaded buildings and POI data
-cat("Number of DSDs loaded:", nrow(cmb_dsds), "\n")
-cat("Buildings loaded:", nrow(cmb_bld_points), "\n")
-cat("POIs loaded:", nrow(cmb_poi), "\n")
-
-# Plot the Initial data
-tm_shape(cmb_dsds) +
-  tm_polygons("Total", palette = "Blues", title = "Population") +
-  tm_shape(cmb_bld_poly) +
-  tm_polygons(size = 0.1, col = "red", title = "Buildings") +
-  tm_shape(cmb_poi) +
-  tm_dots(size = 0.1, col = "green", title = "POIs") +
-  tm_layout(title = "Colombo District: Population, Buildings, and POIs", legend.outside = TRUE)
-```
-
-# Spatial Regression Analysis at DSD Level
-
-Identify DSDs that are statistically underserved in amenity access relative to their population density, building density, and spatial spillover effects from neighboring DSDs.
-
-```{r spatial_regression, warning=False}
-library(tidyr)
-
-# Count POIs per each DSD
-poi_per_dsd <- st_join(
-  cmb_dsds %>% select(DSD_N),
-  cmb_poi %>% select(geometry),
-  join = st_intersects,
-  left = TRUE
-) %>%
-  st_drop_geometry() %>%
-  group_by(DSD_N) %>%
-  summarise(poi_count = n(), .groups = "drop")
-
-# Count Building per each DSD
-bld_per_dsd <- st_join(
-  cmb_dsds %>% select(DSD_N),
-  cmb_bld_points %>% select(geometry),
-  join = st_intersects,
-  left = TRUE
-) %>%
-  st_drop_geometry() %>%
-  group_by(DSD_N) %>%
-  summarise(building_count = n(), .groups = "drop")
-
-# Join the counts back to the DSD data file
-cmb_dsds_bld_poi <- cmb_dsds %>%
-  left_join(poi_per_dsd, by = "DSD_N") %>%
-  left_join(bld_per_dsd, by = "DSD_N") %>%
+# Classify POIs based on fclass
+cmb_poi <- cmb_poi %>%
   mutate(
-    poi_count      = replace_na(poi_count, 0L),
-    building_count = replace_na(building_count, 0L),
-    pop_density  = Total / area_sqkm,                       
-    bld_density  = building_count / area_sqkm,             
-    poi_per_1000 = ifelse(Total > 0, (poi_count / Total) * 1000, NA_real_),                       
-    poi_per_sqkm = poi_count / area_sqkm,                   
-    log_pop_dens = log1p(pop_density),
-    log_bld_dens = log1p(bld_density),
-    log_poi_p1k  = log1p(poi_per_1000),
-    log_poi_sqkm = log1p(poi_per_sqkm)
-  ) %>%
-  filter(!is.na(Total), Total > 0)
+    amenity_type = case_when(
+      fclass %in% c("school", "university", "college", "kindergarten") ~ "education", 
+      fclass %in% c("hospital", "clinic", "pharmacy", "doctors", "dentist", "veterinary", "nursing_home") ~ "healthcare",
+      TRUE ~ NA_character_
+    )) %>% filter(!is.na(amenity_type))
 
-print(cmb_dsds_bld_poi %>% st_drop_geometry() %>% 
-  select(DSD_N, Total, pop_density, poi_count, poi_per_1000, bld_density))
+# Perform a spatial join to associate GND_N with POIs
+cmb_poi_with_gnd <- st_join(cmb_poi, cmb_gnds %>% select(GND_N))
 
-# Save the file to GeoPackage
-st_write(cmb_dsds_bld_poi, gpkg_path, layer = "cmb_dsds_bld_poi", delete_layer = TRUE, quiet = TRUE)
+# Check if the GND_N is correctly added to the POI data
+print(names(cmb_poi_with_gnd)) 
+head(cmb_poi_with_gnd)
+
+# Count education and healthcare POIs per GND
+poi_counts_by_gnd <- cmb_poi_with_gnd %>%
+  st_drop_geometry() %>%
+  group_by(GND_N, amenity_type) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  pivot_wider(names_from = amenity_type, values_from = count, values_fill = list(count = 0))
+
+
+# Keep only final count columns for a stable join schema
+poi_counts_by_gnd <- poi_counts_by_gnd %>%
+  transmute(
+    GND_N,
+    education_count = as.integer(education),
+    healthcare_count = as.integer(healthcare)
+  )
+
+# Check the resulting table
+print(names(poi_counts_by_gnd))
+print(head(poi_counts_by_gnd))
+
+# Join the counts back to cmb_gnds
+cmb_gnds <- cmb_gnds %>%
+  select(-any_of(c("education", "healthcare", "education_count", "healthcare_count"))) %>%
+  left_join(poi_counts_by_gnd, by = "GND_N") %>%
+  mutate(
+    education_count = coalesce(education_count, 0L),
+    healthcare_count = coalesce(healthcare_count, 0L)
+  )
+
+# Save the classified POIs to GeoPackage
+st_write(cmb_poi, gpkg_path, layer = "cmb_poi", delete_layer = TRUE, quiet = TRUE)
+st_write(cmb_gnds, gpkg_path, layer = "cmb_gnds", delete_layer = TRUE, quiet = TRUE)
 ```
+
+---
+
+# 2 Visualize the POI Distribution
+
+Visualize the two amenity categories (educational and healthcare) across Colombo.
+
+```{r visualization_poi, fig.height=10}
+# Split the data based on amenity categories
+education <- cmb_poi %>% filter(amenity_type == "education")
+healthcare <- cmb_poi %>% filter(amenity_type == "healthcare")
+
+# Define a function to create maps
+make_map <- function(pts, title, dot_color) {
+  ggplot() +
+    geom_sf(data = cmb_gnds, fill = "#f7f7f7", color = "#d9d9d9", linewidth = 0.25) +
+    geom_sf(data = st_union(cmb_gnds), fill = NA, color = "#333333", linewidth = 0.6) +
+    geom_sf(
+      data  = pts,
+      color = dot_color,
+      size  = 1.7,
+      alpha = 0.75,
+      shape = 16
+    ) +
+    labs(
+      title = title,
+      subtitle = paste0("n = ", nrow(pts), " points")
+    ) +
+    theme_void(base_size = 12) +
+    theme(
+      plot.title      = element_text(
+        face   = "bold",
+        hjust  = 0,
+        size   = 14,
+        margin = margin(b = 3)
+      ),
+      plot.subtitle   = element_text(size = 10, color = "#5f5f5f", hjust = 0, margin = margin(b = 8)),
+      plot.background = element_rect(fill = "white", color = NA),
+      plot.margin     = margin(10, 10, 10, 10)
+    ) +
+    coord_sf(expand = FALSE)
+}
+
+# Plot the map
+m1 <- make_map(education, "Educational Facilities", "#2166ac")
+m2 <- make_map(healthcare,  "Healthcare Facilities",  "#d6604d")
+
+m1 / m2 +
+  plot_annotation(
+    title   = "Amenity Distribution across Colombo District",
+    caption = "Source: OpenStreetMap | CRS: UTM Zone 44N",
+    theme   = theme(
+      plot.title   = element_text(face = "bold", size = 16, hjust = 0.5),
+      plot.caption = element_text(color = "grey50", size = 9, hjust = 1)
+    )
+  )
+```
+
+---
+
+# 3 Amenity Distribution Analysis
+
+Are the educational, healthcare facilities in Colombo distributed randomly, clustered or regularly distributed?
+Since spatstat requries a observation window, Colombo boundary is used as the observation window.
+
+## 3.1 Quadrat Count Analysis
+
+```{r point_pattern_analysis, fig.height=10}
+library(viridis)
+# Defining the observation window for the amenity categories
+education_ppp <- as.ppp(education, W = as.owin(cmb_boundary))
+healthcare_ppp <- as.ppp(healthcare, W = as.owin(cmb_boundary))
+
+# Test the quadrant count for each amenity
+education_quadrant <- quadratcount(education_ppp, nx = 10, ny = 10)
+healthcare_quadrant <- quadratcount(healthcare_ppp, nx = 10, ny = 10)
+
+# Plot the point distribution in the quardrants
+op <- par(no.readonly = TRUE)
+par(mfrow = c(2, 1), mar = c(3.8, 3.8, 3, 1.5), bg = "white")
+
+plot(education_quadrant, main = "Educational Facilities | Quadrat Count", col = viridis(10), legend = TRUE, main.cex = 1.2)
+plot(st_geometry(education), add = TRUE, col = adjustcolor("grey70", alpha.f = 0.4), pch = 16)
+plot(as.owin(cmb_boundary), add = TRUE, border = "grey20", lwd = 1)
+
+plot(healthcare_quadrant, main = "Healthcare Facilities | Quadrat Count", col = viridis(10),legend = TRUE, main.cex = 1.2)
+plot(st_geometry(healthcare), add = TRUE, col = adjustcolor("grey70", alpha.f = 0.4), pch = 16)
+plot(as.owin(cmb_boundary), add = TRUE, border = "grey20", lwd = 1)
+par(op)
+```
+
+## 3.2 Chi-squared Test for Complete Spatial Randomness (CSR)
+
+Let's do a chi-squared test to see if the observed distribution of amenities in the quadrants follow a complete spatial randomness (CSR) pattern or do they show clustering or regularity.
+
+```{r chi_squared_test_edu}
+# Test the quadrat counts for each amenity category
+quadrat.test(education_quadrant)
+```
+
+p-value is less than 0.05 (if we consider a significance of 5%), reject the null hypothesis of complete spatial randomness (CSR) for educational facilities, indicating that they are not randomly distributed across Colombo. The observed distribution is likely to be clustered or regular. The magnitude of the test statistic constitute strong evidence against randomness, indicates an extremely uneven distribution, where educational facilities are heavily concentrated in a small number of quadrats while large portions of Colombo have very few or none at all. This points to significant spatial clustering of educational facilities across the district.
+
+```{r chi_squared_test_health}
+# Test the quadrat counts for each amenity category
+quadrat.test(healthcare_quadrant)
+```
+
+The p-value is less than 0.05 (at a 5% significance level), we reject the null hypothesis of Complete Spatial Randomness (CSR) for healthcare facilities, indicating that they are not 
+randomly distributed across Colombo. The observed distribution is likely to be clustered or regular. Although the test statistic (X² = 808.99) is considerably smaller than that of educational facilities, it still constitutes strong evidence against randomness, indicating an uneven distribution where healthcare facilities are concentrated in certain quadrats while other parts of Colombo remain comparatively underserved. This points to significant spatial clustering of healthcare facilities across the district.
+
+## 3.3 Density Analysis
+
+Perform a kernel density estimation to visualize the intensity of the given amenity categories see their visual differences in terms of spatial distribution across Colombo.
+
+```{r kde, fig.height=10}
+# Calculate the kernel density
+education_dens <- density(education_ppp, sigma = bw.diggle)
+healthcare_dens <- density(healthcare_ppp, sigma = bw.diggle)
+
+# Plot the kernel density
+op <- par(no.readonly = TRUE)
+par(mfrow = c(2, 1), mar = c(3.8, 3.8, 3, 1.5), bg = "white")
+
+plot(education_dens, main = "Educational Facilities KDE", col = viridis(100))
+plot(as.owin(cmb_boundary), add = TRUE, border = "grey20", lwd = 1)
+
+plot(healthcare_dens, main = "Healthcare Facilities KDE", col = viridis(100))
+plot(as.owin(cmb_boundary), add = TRUE, border = "grey20", lwd = 1)
+
+par(op)
+```
+
+## 3.4 Normality Test on KDE Values
+
+Let's see is the distribution of educational and healthcare facilities are similar accross Colombo district.
+
+```{r normality_test_education}
+#| code-fold: true
+
+# Convert spatstat density objects to terra rasters
+education_rast  <- rast(education_dens)
+healthcare_rast <- rast(healthcare_dens)
+
+# Resample healthcare raster to match education raster grid exactly
+healthcare_rast_resampled <- resample(healthcare_rast, education_rast)
+
+# Extract raster cell values
+education_vals  <- values(education_rast)
+healthcare_vals <- values(healthcare_rast_resampled)
+
+# Remove NA cells (cells outside the observation window)
+valid <- !is.na(education_vals) & !is.na(healthcare_vals)
+cat("Valid raster cells used:", sum(valid), "\n")
+
+# Shapiro-Wilk requires n <= 5000
+sample_idx <- sample(which(valid), min(5000, sum(valid)))
+
+# Plot the histogram to visualize the distribution of intensity values for both categories
+hist(education_vals[valid],
+     breaks = 50,
+     main   = "Education KDE",
+     xlab   = "Intensity",
+     col    = "#2166ac80",
+     border = "white")
+
+# Test on raw values of education
+shapiro_edu <- shapiro.test(education_vals[sample_idx])
+cat("Education KDE:    W =", round(shapiro_edu$statistic, 4), "| p =", shapiro_edu$p.value, "\n")
+```
+
+Since the p-value of the Shapiro-Wilk test is 2.131641e-85, which is significantly less than 0.05, null hypothesis of normality distribution can be rejected. This indicates that the distribution of educational facility intensity across Colombo significantly deviates from normality, suggesting a non-normal distribution. 
+
+```{r normality_test_healthcare}
+#| code-fold: true
+
+# Plot the histogram
+hist(healthcare_vals[valid],
+     breaks = 50,
+     main   = "Healthcare KDE",
+     xlab   = "Intensity",
+     col    = "#d6604d80",
+     border = "white")
+
+# Shapiro Wilk test for the KDE values of healthcare facilities
+shapiro_hlth <- shapiro.test(healthcare_vals[sample_idx])
+cat("Healthcare KDE:   W =", round(shapiro_hlth$statistic, 4), "| p =", shapiro_hlth$p.value, "\n")
+```
+
+Also the healthcare KDE values have p-value of p = 8.578645e-88, which is significantly less than 0.05, which says that the healthcare facility intensity distribution across Colombo also significantly deviates from normality, indicating a non-normal distribution. 
+
+Both educational and healthcare facilities show non-normal distributions in their spatial intensity across the district. Therefore using the Pearson R correlation coefficient to measure the relationship between the two categories may not be appropriate. 
+
+## 3.5 Correlation Analysis
+
+Since both educational and healthcare facility intensity distributions are confirmed to be non-normal, Spearman's rank correlation is used as the primary measure of spatial association. The analysis is conducted at two spatial scales to provide a comprehensive understanding of the relationship between the two amenity types across Colombo.
+
+- **H₀:** There is no significant correlation between the spatial distribution of educational and healthcare facilities
+- **H₁:** There is a significant correlation between the spatial distribution of educational and healthcare facilities
+
+### 3.5.1 Pixel-level KDE Correlation
+```{r spearman_kde}
+#| code-fold: true
+
+spearman_kde <- cor.test(
+  education_vals[valid],
+  healthcare_vals[valid],
+  method = "spearman"
+)
+
+cat("Spearman Rank Correlation (Pixel-level KDE)\n")
+cat("rho =", round(spearman_kde$estimate, 4), "| p-value =", spearman_kde$p.value, "\n")
+```
+
+### 3.5.2 GND-level Density Correlation
+```{r spearman_gnd}
+#| code-fold: true
+#| warning: false
+
+# Calculate facility density per km² for each GND
+gnd_density <- cmb_gnds %>%
+  st_drop_geometry() %>%
+  mutate(
+    education_density  = education_count  / Area_sqkm,
+    healthcare_density = healthcare_count / Area_sqkm
+  ) %>%
+  filter(education_density > 0 | healthcare_density > 0) %>%
+  select(GND_N, Area_sqkm, education_count, healthcare_count,
+         education_density, healthcare_density)
+
+spearman_gnd <- cor.test(
+  gnd_density$education_density,
+  gnd_density$healthcare_density,
+  method = "spearman"
+)
+
+cat("Spearman Rank Correlation (GND-level Density)\n")
+cat("rho =", round(spearman_gnd$estimate, 4), "| p-value =", spearman_gnd$p.value, "\n")
+```
+
+### 3.5.3 Summary
+```{r correlation_summary}
+#| code-fold: true
+
+correlation_summary <- data.frame(
+  Scale      = c("Pixel level KDE", "GND level Density"),
+  Rho        = round(c(spearman_kde$estimate, spearman_gnd$estimate), 4),
+  P_value    = c("< 0.001", round(spearman_gnd$p.value, 3)),
+  Strength   = c("Moderate positive", "Negligible negative")
+)
+
+kable(correlation_summary,
+      caption    = "Spearman Rank Correlation: Education vs Healthcare Facility Distribution",
+      col.names  = c("Scale", "rho", "p-value", "Strength")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+---
