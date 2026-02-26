@@ -11,6 +11,7 @@ format:
     code-tools: true
     theme: cosmo
     self-contained: true
+    resource-embed: true
 execute:
   warning: false
   message: false
@@ -363,14 +364,91 @@ plot(healthcare_dens, main = "Healthcare Facilities KDE", col = viridis(100))
 plot(as.owin(cmb_boundary), add = TRUE, border = "grey20", lwd = 1)
 
 par(op)
+
+# Calculate facility density per km² for mapping
+gnd_density <- cmb_gnds %>%
+  st_as_sf() %>%
+  mutate(
+    education_density  = education_count  / Area_sqkm,
+    healthcare_density = healthcare_count / Area_sqkm
+  ) %>%
+  select(GND_N, Area_sqkm, education_count, healthcare_count,
+         education_density, healthcare_density, geometry)
+
+# Plot the GND wise Density Map
+p1 <- ggplot() +
+  geom_sf(data = gnd_density, aes(fill = education_density),
+          color = "#d9d9d9", linewidth = 0.15) +
+  geom_sf(data = st_union(cmb_gnds), fill = NA,
+          color = "#333333", linewidth = 0.6) +
+  scale_fill_viridis_c(
+    option    = "viridis",
+    name      = "Facilities\nper km²",
+    na.value  = "grey90",
+    trans     = "sqrt"
+  ) +
+  labs(
+    title    = "Educational Facility Density",
+    subtitle = "Facilities per km² by GND"
+  ) +
+  theme_void(base_size = 12) +
+  theme(
+    plot.title      = element_text(face = "bold", size = 14, hjust = 0,
+                                   margin = margin(b = 3)),
+    plot.subtitle   = element_text(size = 10, color = "#5f5f5f", hjust = 0,
+                                   margin = margin(b = 8)),
+    plot.background = element_rect(fill = "white", color = NA),
+    plot.margin     = margin(10, 10, 10, 10),
+    legend.position = "right"
+  ) +
+  coord_sf(expand = FALSE)
+
+p2 <- ggplot() +
+  geom_sf(data = gnd_density, aes(fill = healthcare_density),
+          color = "#d9d9d9", linewidth = 0.15) +
+  geom_sf(data = st_union(cmb_gnds), fill = NA,
+          color = "#333333", linewidth = 0.6) +
+  scale_fill_viridis_c(
+    option    = "viridis",
+    name      = "Facilities\nper km²",
+    na.value  = "grey90",
+    trans     = "sqrt"
+  ) +
+  labs(
+    title    = "Healthcare Facility Density",
+    subtitle = "Facilities per km² by GND"
+  ) +
+  theme_void(base_size = 12) +
+  theme(
+    plot.title      = element_text(face = "bold", size = 14, hjust = 0,
+                                   margin = margin(b = 3)),
+    plot.subtitle   = element_text(size = 10, color = "#5f5f5f", hjust = 0,
+                                   margin = margin(b = 8)),
+    plot.background = element_rect(fill = "white", color = NA),
+    plot.margin     = margin(10, 10, 10, 10),
+    legend.position = "right"
+  ) +
+  coord_sf(expand = FALSE)
+
+p1 / p2 +
+  plot_annotation(
+    title   = "GND wise Facility Density across Colombo District",
+    caption = "Source: OpenStreetMap | Area-adjusted counts | CRS: UTM Zone 44N",
+    theme   = theme(
+      plot.title   = element_text(face = "bold", size = 16, hjust = 0.5),
+      plot.caption = element_text(color = "grey50", size = 9, hjust = 1)
+    )
+  )
 ```
 
-## 3.4 Normality Test on KDE Values
+## 3.4 Selecting an Appropriate Correlation Method
 
-Let's see is the distribution of educational and healthcare facilities are similar accross Colombo district.
+Let's see is the distribution of educational and healthcare facilities are similar accross Colombo district. First check that what type of distribution the KDE values of both categories follw.
 
 ```{r normality_test_education}
 #| code-fold: true
+
+set.seed(13244)
 
 # Convert spatstat density objects to terra rasters
 education_rast  <- rast(education_dens)
@@ -403,7 +481,7 @@ shapiro_edu <- shapiro.test(education_vals[sample_idx])
 cat("Education KDE:    W =", round(shapiro_edu$statistic, 4), "| p =", shapiro_edu$p.value, "\n")
 ```
 
-Since the p-value of the Shapiro-Wilk test is 2.131641e-85, which is significantly less than 0.05, null hypothesis of normality distribution can be rejected. This indicates that the distribution of educational facility intensity across Colombo significantly deviates from normality, suggesting a non-normal distribution. 
+Since the p-value of the Shapiro-Wilk test is 3.614476e-85, which is significantly less than 0.05, null hypothesis of normality distribution can be rejected. This indicates that the distribution of educational facility intensity across Colombo significantly deviates from normality, suggesting a non-normal distribution. 
 
 ```{r normality_test_healthcare}
 #| code-fold: true
@@ -421,7 +499,7 @@ shapiro_hlth <- shapiro.test(healthcare_vals[sample_idx])
 cat("Healthcare KDE:   W =", round(shapiro_hlth$statistic, 4), "| p =", shapiro_hlth$p.value, "\n")
 ```
 
-Also the healthcare KDE values have p-value of p = 8.578645e-88, which is significantly less than 0.05, which says that the healthcare facility intensity distribution across Colombo also significantly deviates from normality, indicating a non-normal distribution. 
+Also the healthcare KDE values have p-value of p = 4.798521e-88, which is significantly less than 0.05, which says that the healthcare facility intensity distribution across Colombo also significantly deviates from normality, indicating a non-normal distribution. 
 
 Both educational and healthcare facilities show non-normal distributions in their spatial intensity across the district. Therefore using the Pearson R correlation coefficient to measure the relationship between the two categories may not be appropriate. 
 
@@ -429,63 +507,43 @@ Both educational and healthcare facilities show non-normal distributions in thei
 
 Since both educational and healthcare facility intensity distributions are confirmed to be non-normal, Spearman's rank correlation is used as the primary measure of spatial association. The analysis is conducted at two spatial scales to provide a comprehensive understanding of the relationship between the two amenity types across Colombo.
 
-- **H₀:** There is no significant correlation between the spatial distribution of educational and healthcare facilities
-- **H₁:** There is a significant correlation between the spatial distribution of educational and healthcare facilities
-
-### 3.5.1 Pixel-level KDE Correlation
 ```{r spearman_kde}
 #| code-fold: true
 
+# Pixel wise KDE Correlation
+# Spearman's rank correlation test
 spearman_kde <- cor.test(
   education_vals[valid],
   healthcare_vals[valid],
   method = "spearman"
 )
 
-cat("Spearman Rank Correlation (Pixel-level KDE)\n")
-cat("rho =", round(spearman_kde$estimate, 4), "| p-value =", spearman_kde$p.value, "\n")
-```
-
-### 3.5.2 GND-level Density Correlation
-```{r spearman_gnd}
-#| code-fold: true
-#| warning: false
-
-# Calculate facility density per km² for each GND
-gnd_density <- cmb_gnds %>%
-  st_drop_geometry() %>%
-  mutate(
-    education_density  = education_count  / Area_sqkm,
-    healthcare_density = healthcare_count / Area_sqkm
-  ) %>%
-  filter(education_density > 0 | healthcare_density > 0) %>%
-  select(GND_N, Area_sqkm, education_count, healthcare_count,
-         education_density, healthcare_density)
-
+# GND wise KDE Correlation
+# Spearman's rank correlation test
 spearman_gnd <- cor.test(
   gnd_density$education_density,
   gnd_density$healthcare_density,
   method = "spearman"
 )
 
-cat("Spearman Rank Correlation (GND-level Density)\n")
-cat("rho =", round(spearman_gnd$estimate, 4), "| p-value =", spearman_gnd$p.value, "\n")
+# Summary of the correlation results
+cat("  - Pixel wise Spearman Correlation rho:", round(spearman_kde$estimate, 4), "\n")
+cat("  - GND wise Spearman Correlation rho:", round(spearman_gnd$estimate, 4), "\n")
 ```
 
-### 3.5.3 Summary
-```{r correlation_summary}
-#| code-fold: true
 
-correlation_summary <- data.frame(
-  Scale      = c("Pixel level KDE", "GND level Density"),
-  Rho        = round(c(spearman_kde$estimate, spearman_gnd$estimate), 4),
-  P_value    = c("< 0.001", round(spearman_gnd$p.value, 3)),
-  Strength   = c("Moderate positive", "Negligible negative")
-)
+| Scale | rho | Strength |
+|---|---|---|---|
+| Pixel wise KDE | 0.5544 | Moderate positive |
+| GND wise Density | -0.1603 | Negligible negative |
 
-kable(correlation_summary,
-      caption    = "Spearman Rank Correlation: Education vs Healthcare Facility Distribution",
-      col.names  = c("Scale", "rho", "p-value", "Strength")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
-```
+At the pixel level, there is a moderate positive correlation between the intensity of education and healthcare facilities, this reflect that areas with higher concentration of educational facilities also tend to have higher concentration of healthcare facilities as well.
+
+However when the data is aggregated at the GND level, the correlation becomes negligible and slightly negative, which suggests that when looking at GND level densities there is no meaningful relationship between the distribution of educational and healthcare facilities.
+
 ---
+
+# 4 Spatial Regression Analysis
+
+I want to understand the factors that influence the distribution of education and healthcare facilities across Colombo district in terms of GND level attributes.
+
