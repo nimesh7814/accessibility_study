@@ -1006,3 +1006,9 @@ Road accessibility and built-up intensity are the strongest positive drivers of 
 A notable demographic mismatch exists in healthcare, where GNDs with higher proportions of young residents have significantly fewer healthcare facilities. Poverty and unemployment were not significant in either cases, suggesting that socioeconomic deprivation alone does not determine facility provision. The significant spatial error parameters (education: λ = 0.452, healthcare: λ = 0.190) indicate that unmeasured factors are also in play that this analysis has not captured.
 
 ---
+
+# Links
+
+Github Repository: https://github.com/nimesh7814/accessibility_study.git
+
+---
