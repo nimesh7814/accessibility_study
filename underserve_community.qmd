@@ -24,7 +24,9 @@ This notebook explores the spatial distribution of education and healthcare faci
 
 # User Stories
 
-## User Story 1: Urban Planning Professor: Prof. Jagath Munasinghe
+## User Story 1
+
+**Prof. Jagath Munasinghe | Urban Planning Professor | University of Moratuwa**
 
 ::: {.callout-note appearance="minimal"}
 
@@ -38,7 +40,9 @@ This notebook explores the spatial distribution of education and healthcare faci
 
 ---
 
-## User Story 2: Infrastructure Planning Officer: Plnr. Lasantha Perera
+## User Story 2
+
+**Plnr. Lasantha Perera | Infrastructure Planning Officer | Colombo City Council**
 
 ::: {.callout-note appearance="minimal"}
 
@@ -96,6 +100,7 @@ library(spdep)
 library(spatialreg)
 library(knitr)
 library(patchwork)
+library(viridis)
 
 # Improve figure clarity in rendered output
 knitr::opts_chunk$set(
@@ -280,6 +285,8 @@ st_write(cmb_gnds, gpkg_path, layer = "cmb_gnds", delete_layer = TRUE, quiet = T
 Visualize the two amenity categories (educational and healthcare) across Colombo.
 
 ```{r visualization_poi, fig.height=10}
+#| code-fold: true
+
 # Split the data based on amenity categories
 education <- cmb_poi %>% filter(amenity_type == "education")
 healthcare <- cmb_poi %>% filter(amenity_type == "healthcare")
@@ -290,9 +297,9 @@ make_map <- function(pts, title, dot_color) {
     geom_sf(data = cmb_gnds, fill = "#f7f7f7", color = "#d9d9d9", linewidth = 0.25) +
     geom_sf(data = st_union(cmb_gnds), fill = NA, color = "#333333", linewidth = 0.6) +
     geom_sf(
-      data  = pts,
+      data = pts,
       color = dot_color,
-      size  = 1.7,
+      size = 5,
       alpha = 0.75,
       shape = 16
     ) +
@@ -302,13 +309,13 @@ make_map <- function(pts, title, dot_color) {
     ) +
     theme_void(base_size = 12) +
     theme(
-      plot.title      = element_text(
-        face   = "bold",
-        hjust  = 0,
-        size   = 14,
+      plot.title = element_text(
+        face = "bold",
+        hjust = 0.5, 
+        size = 14,
         margin = margin(b = 3)
       ),
-      plot.subtitle   = element_text(size = 10, color = "#5f5f5f", hjust = 0, margin = margin(b = 8)),
+      plot.subtitle   = element_text(size = 10, color = "#5f5f5f", hjust = 0.5, margin = margin(b = 8)), 
       plot.background = element_rect(fill = "white", color = NA),
       plot.margin     = margin(10, 10, 10, 10)
     ) +
@@ -340,7 +347,8 @@ Since spatstat requries a observation window, Colombo boundary is used as the ob
 ## 3.1 Quadrat Count Analysis
 
 ```{r point_pattern_analysis, fig.height=10}
-library(viridis)
+#| code-fold: true
+
 # Defining the observation window for the amenity categories
 education_ppp <- as.ppp(education, W = as.owin(cmb_boundary))
 healthcare_ppp <- as.ppp(healthcare, W = as.owin(cmb_boundary))
@@ -363,6 +371,8 @@ plot(as.owin(cmb_boundary), add = TRUE, border = "grey20", lwd = 1)
 par(op)
 ```
 
+As the quadrat count maps shows that both educational and healthcare facilities are not evenly distributed. In terms of both of these amenity categories majority of the amenities are located towards the western part of the district, which is higher urbanized area of the district.
+
 ## 3.2 Chi-squared Test for Complete Spatial Randomness (CSR)
 
 Let's do a chi-squared test to see if the observed distribution of amenities in the quadrants follow a complete spatial randomness (CSR) pattern or do they show clustering or regularity.
@@ -372,21 +382,22 @@ Let's do a chi-squared test to see if the observed distribution of amenities in 
 quadrat.test(education_quadrant)
 ```
 
-p-value is less than 0.05 (if we consider a significance of 5%), reject the null hypothesis of complete spatial randomness (CSR) for educational facilities, indicating that they are not randomly distributed across Colombo. The observed distribution is likely to be clustered or regular. The magnitude of the test statistic constitute strong evidence against randomness, indicates an extremely uneven distribution, where educational facilities are heavily concentrated in a small number of quadrats while large portions of Colombo have very few or none at all. This points to significant spatial clustering of educational facilities across the district.
+p-value is less than 0.05 (if we consider a significance of 5%), reject the null hypothesis of complete spatial randomness (CSR) for educational facilities, indicating that they are not randomly distributed across Colombo. The observed distribution is likely to be clustered or regular. The magnitude of the test statistic says a strong evidence against randomness, indicates an extremely uneven distribution, where educational facilities are heavily concentrated in a small number of quadrats while large portions of Colombo have very few or none at all. 
 
 ```{r chi_squared_test_health}
 # Test the quadrat counts for each amenity category
 quadrat.test(healthcare_quadrant)
 ```
 
-The p-value is less than 0.05 (at a 5% significance level), we reject the null hypothesis of Complete Spatial Randomness (CSR) for healthcare facilities, indicating that they are not 
-randomly distributed across Colombo. The observed distribution is likely to be clustered or regular. Although the test statistic (X² = 808.99) is considerably smaller than that of educational facilities, it still constitutes strong evidence against randomness, indicating an uneven distribution where healthcare facilities are concentrated in certain quadrats while other parts of Colombo remain comparatively underserved. This points to significant spatial clustering of healthcare facilities across the district.
+The p-value is less than 0.05 (at a 5% significance level), we reject the null hypothesis of Complete Spatial Randomness (CSR) for healthcare facilities, indicating that they are not randomly distributed across Colombo. The observed distribution is likely to be clustered or regular. Although the test statistic (X² = 808.99) is considerably smaller than that of educational facilities, it still constitutes strong evidence against randomness, indicating an uneven distribution where healthcare facilities are concentrated in certain quadrats while other parts of Colombo remain comparatively underserved. This points to significant spatial clustering of healthcare facilities across the district.
 
 ## 3.3 Density Analysis
 
 Perform a kernel density estimation to visualize the intensity of the given amenity categories see their visual differences in terms of spatial distribution across Colombo.
 
 ```{r kde, fig.height=10}
+#| code-fold: true
+
 # Calculate the kernel density
 education_dens <- density(education_ppp, sigma = bw.diggle)
 healthcare_dens <- density(healthcare_ppp, sigma = bw.diggle)
@@ -469,6 +480,8 @@ p1 / p2 +
   )
 ```
 
+This aggregation towards the western part of the colombo district of both educational and healthcare facilities is clear when looking at the pixel and GND wise density maps.
+
 ## 3.4 Selecting an Appropriate Correlation Method
 
 Let's see is the distribution of educational and healthcare facilities are similar accross Colombo district. First check that what type of distribution the KDE values of both categories follw.
@@ -491,7 +504,6 @@ healthcare_vals <- values(healthcare_rast_resampled)
 
 # Remove NA cells (cells outside the observation window)
 valid <- !is.na(education_vals) & !is.na(healthcare_vals)
-cat("Valid raster cells used:", sum(valid), "\n")
 
 # Shapiro-Wilk requires n <= 5000
 sample_idx <- sample(which(valid), min(5000, sum(valid)))
@@ -527,7 +539,7 @@ shapiro_hlth <- shapiro.test(healthcare_vals[sample_idx])
 cat("Healthcare KDE:   W =", round(shapiro_hlth$statistic, 4), "| p =", shapiro_hlth$p.value, "\n")
 ```
 
-Also the healthcare KDE values have p-value of p = 4.798521e-88, which is significantly less than 0.05, which says that the healthcare facility intensity distribution across Colombo also significantly deviates from normality, indicating a non-normal distribution. 
+Also the healthcare KDE values have p-value of p = 4.798521e-88, which is significantly less than 0.05, which says that the healthcare facility intensity distribution across Colombo also significantly deviates from a normal distribution, indicating a non-normal distribution. 
 
 Both educational and healthcare facilities show non-normal distributions in their spatial intensity across the district. Therefore using the Pearson R correlation coefficient to measure the relationship between the two categories may not be appropriate. 
 
@@ -555,19 +567,19 @@ spearman_gnd <- cor.test(
 )
 
 # Summary of the correlation results
-cat("  - Pixel wise Spearman Correlation rho:", round(spearman_kde$estimate, 4), "\n")
-cat("  - GND wise Spearman Correlation rho:", round(spearman_gnd$estimate, 4), "\n")
+cat("Pixel wise Spearman Correlation rho:", round(spearman_kde$estimate, 4), "\n")
+cat("GND wise Spearman Correlation rho:", round(spearman_gnd$estimate, 4), "\n")
 ```
 
 
 | Scale | rho | Strength |
 |---|---|---|---|
-| Pixel wise KDE | 0.5544 | Moderate positive |
-| GND wise Density | 0.3229 | Moderate positive |
+| Pixel wise KDE | 0.554 | Moderate positive |
+| GND wise Density | 0.323 | Week positive |
 
-At the pixel level, there is a moderate positive correlation between the intensity of education and healthcare facilities, this reflect that areas with higher concentration of educational facilities also tend to have higher concentration of healthcare facilities as well.
+Both scales reveal a positive but moderate relationship between education and healthcare facility intensity across Colombo district. At the pixel level (ρ = 0.554), areas of high educational facility concentration tend to coincide with areas of high healthcare facility concentration, suggesting some degree of co-location at these scales. When aggregated to the GND level (ρ = 0.323), the association weakens, indicating that the co-location pattern is more pronounced at local pixel scale than at the GND scale.
 
-Additionally, when the data is aggregated at the GND level, the correlation is also moderate positive, which suggests that when looking at GND level densities, there is still tendency for GNDs with higher education facilities also tend to have higher healthcare facilities as well. However the correlation is weaker at GND level compared to pixel level.
+In order to understand underline characteristics of the distribution of amenities and answer the question of which factors has contributed to the current state of these amenty distribution pattern spatial regression analysis needs to be conducted, which is the next step of this analysis.
 
 ---
 
@@ -580,6 +592,7 @@ I want to understand the factors that influence the distribution of education an
 First see the distribution of education and healthcare facilities per 1000 people across GNDs
 
 ```{r per1000_map, fig.height=10}
+#| code-fold: true
 
 # Define break points and labels
 edu_breaks <- c(0, 0.001, 0.5, 1.0, 2.0, max(cmb_gnds$education_per1000, na.rm = TRUE))
@@ -592,26 +605,26 @@ p1 <- ggplot() +
   geom_sf(data = st_union(cmb_gnds), fill = NA,
           color = "#333333", linewidth = 0.6) +
   scale_fill_stepsn(
-    colours  = RColorBrewer::brewer.pal(5, "Blues"),
-    breaks   = c(0.001, 0.5, 1.0, 2.0),
-    limits   = c(0, max(cmb_gnds$education_per1000, na.rm = TRUE)),
-    labels   = c("Very Low (<0.5)", "Low (0.5–1)", "Medium (1–2)", "High (>2)"),
-    name     = "Education Facilities\nper 1000 people",
+    colours = RColorBrewer::brewer.pal(5, "Blues"),
+    breaks = c(0.001, 0.5, 1.0, 2.0),
+    limits = c(0, max(cmb_gnds$education_per1000, na.rm = TRUE)),
+    labels = c("Very Low (<0.5)", "Low (0.5–1)", "Medium (1–2)", "High (>2)"),
+    name = "Education Facilities\nper 1000 people",
     na.value = "grey90",
-    guide    = guide_coloursteps(show.limits = FALSE)
+    guide = guide_coloursteps(show.limits = FALSE)
   ) +
   labs(
-    title    = "Education Facilities per 1000 People",
+    title = "Education Facilities per 1000 People",
     subtitle = "Education facilities per 1000 people by GND"
   ) +
   theme_void(base_size = 12) +
   theme(
-    plot.title      = element_text(face = "bold", size = 14, hjust = 0,
+    plot.title = element_text(face = "bold", size = 14, hjust = 0,
                                    margin = margin(b = 3)),
-    plot.subtitle   = element_text(size = 10, color = "#5f5f5f", hjust = 0,
+    plot.subtitle = element_text(size = 10, color = "#5f5f5f", hjust = 0,
                                    margin = margin(b = 8)),
     plot.background = element_rect(fill = "white", color = NA),
-    plot.margin     = margin(10, 10, 10, 10),
+    plot.margin = margin(10, 10, 10, 10),
     legend.position = "right"
   ) +
   coord_sf(expand = FALSE)
@@ -622,9 +635,9 @@ p2 <- ggplot() +
   geom_sf(data = st_union(cmb_gnds), fill = NA,
           color = "#333333", linewidth = 0.6) +
   scale_fill_stepsn(
-    colours  = RColorBrewer::brewer.pal(5, "Reds"),
-    breaks   = c(0.001, 0.5, 1.0, 2.0),
-    limits   = c(0, max(cmb_gnds$healthcare_per1000, na.rm = TRUE)),
+    colours = RColorBrewer::brewer.pal(5, "Reds"),
+    breaks = c(0.001, 0.5, 1.0, 2.0),
+    limits = c(0, max(cmb_gnds$healthcare_per1000, na.rm = TRUE)),
     labels   = c("Very Low (<0.5)", "Low (0.5–1)", "Medium (1–2)", "High (>2)"),
     name     = "Healthcare Facilities\nper 1000 people",
     na.value = "grey90",
