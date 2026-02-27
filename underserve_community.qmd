@@ -20,94 +20,38 @@ execute:
 
 # Introduction
 
-This notebook explores the spatial distribution of educational and healthcare facilities across the Colombo district in Sri Lanka. The analysis is structured into two main sections: Point Pattern Analysis and Spatial Regression Analysis.
+This notebook explores the spatial distribution of education and healthcare facilities across the Colombo district in Sri Lanka. The analysis is structured into two main sections: Point Pattern Analysis and Spatial Regression Analysis.
 
 # User Stories
 
-## User Story 1: Urban Planner
+## User Story 1: Urban Planning Professor: Prof. Jagath Munasinghe
 
 ::: {.callout-note appearance="minimal"}
-**Priya Jayawardena** | Age 34 | Urban Planner  
-Urban Development Authority (UDA), Colombo, Sri Lanka  
+
+**As an** Urban Planning Professor at the University of Moratuwa, who researches spatial distribution of urban amenities across Sri Lankan cities,
+
+**I want to** identify whether education and healthcare facilities has the same distribution pattern across Colombo district by measuring their spatial association at both interms of locations and GND scale,
+
+**So that** I can determine whether Colombo's urban amenity provision reflects a coordinated integrated planning effort or whether the two facility categories developed independently under different planning regimes, and use this evidence to contribute to academic debate on fragmented infrastructure development in Sri Lankan cities.
+
 :::
 
-### Responsibilities
+---
 
-- Develop and review spatial development plans for Colombo district at the GND level.
-- Identify gaps in public facility coverage and recommend locations for new infrastructure investments.
-- Coordinate with the Ministry of Education to align school and kindergarten placement with population growth patterns.
-- Prepare evidence-based reports to support budget allocation decisions for educational infrastructure.
-
-### Experiences
-
-- Has extensive experience in facility gap analysis and spatial planning for public services.
-- Familiar with GIS-based tools for mapping and analyzing urban service coverage.
-- Previously worked on school rationalization projects identifying overcrowded vs. underutilized facilities.
-
-### Challenges
-
-- Lacks fine-grained spatial data on how educational facilities are distributed relative to
-population density at the GND level.
-- Difficult to justify new facility placements to stakeholders without quantitative evidence
-of clustering or underservice.
-- Existing planning reports rely on administrative counts rather than per-capita or
-density-adjusted measures, which misrepresent actual access gaps.
-
-### Goals
-
-- Identify which GNDs in Colombo are statistically underserved by educational facilities
-on a per-capita basis.
-- Use spatial regression findings to understand what infrastructure and demographic
-factors drive the current uneven distribution of schools and kindergartens.
-- Produce a prioritized list of GNDs for new educational facility investment backed by
-spatial evidence.
-
-## User Story 2: Public Health Infrastructure Analyst
+## User Story 2: Infrastructure Planning Officer: Plnr. Lasantha Perera
 
 ::: {.callout-note appearance="minimal"}
-**Ruwan Dissanayake** | Age 42 | Public Health Infrastructure Analyst  
-Ministry of Health, Health Infrastructure Planning Division, Colombo, Sri Lanka  
-BSc in Public Health | Postgraduate Qualification in Health Systems Management
+
+**As an** Infrastructure Planning Officer at the Colombo City Council who is responsible for assessing the spatial adequacy
+of public facilities and advising on future infrastructure investments across the district,
+
+**I want to** identify which factors among population density, building density, road density, and demographic age structure, are the most significantly influence the per capita distribution of education and healthcare facilities across Colombo district,
+
+**So that** I can understand the structural drivers behind the current uneven facility distribution pattern and provide the
+city council with a quantitative evidence base for directing future education and healthcare investments to the GNDs that
+are most underserved relative to their population and infrastructure characteristics.
+
 :::
-
-### Responsibilities
-
-- Assess the spatial adequacy of healthcare facilities including hospitals, clinics, and
-pharmacies across Colombo district.
-- Advise on the placement of new primary healthcare facilities to address demographic
-and geographic service gaps.
-- Monitor healthcare access equity across different population groups including children,
-elderly and working-age adults.
-- Collaborate with local authorities to align healthcare facility planning with urban
-development strategies.
-
-### Experiences
-
-- Has a strong background in healthcare access analysis and equity assessments at
-administrative unit level.
-- Previously led district-level audits to identify underserved communities in the
-Western Province.
-- Experienced in working with census data to understand population-facility ratios
-across administrative boundaries.
-
-### Challenges
-
-- Difficulty identifying whether low healthcare facility counts in certain GNDs reflect a
-genuine service gap or simply low population demand.
-- Limited understanding of how demographic structure, particularly the proportion of
-young or elderly residents, relates to the spatial pattern of healthcare provision.
-- Existing facility audits do not account for spatial autocorrelation, meaning nearby
-GNDs influence each other in ways that standard reports fail to capture.
-
-### Goals
-
-- Pinpoint GNDs where healthcare facilities per 1000 people are critically low, especially
-in areas with high proportions of young residents where a demographic mismatch has
-been identified.
-- Use spatial regression evidence to advocate for targeted clinic and pharmacy
-placements in road-accessible but currently underserved GNDs.
-- Ensure healthcare infrastructure planning in Colombo reflects actual population need
-rather than historical facility distribution patterns.
 
 ---
 
@@ -116,13 +60,13 @@ rather than historical facility distribution patterns.
 These steps include the preparation of spatial data for the analysis of Colombo District. The task involves loading relevant datasets, converting the coordinate system to EPSG:32644 for proper dimension and area calculations, and merging demographic data with building information. The goal is to calculate attributes related to population demographics, housing, road infrastructure, and building area.
 
 - **Population Groups:**
-  - `Population_0_14`: Number of people aged 0-14.
-  - `Population_15_59`: Number of people aged 15-59.
-  - `Population_60_64`: Number of people aged 60-64.
-  - `Population_Above_65`: Number of people aged above 65.
+  - `AG_0_14`: Number of people aged 0-14.
+  - `AG_15_59`: Number of people aged 15-59.
+  - `AG_60_64`: Number of people aged 60-64.
+  - `AG_Above_65`: Number of people aged above 65.
   - `Male`: Total number of males.
   - `Female`: Total number of females.
-  - `Total_Population`: Total number of people (Male + Female).
+  - `Total_Population`: Total number of people.
 
 - **Housing and Employment:**
   - `Occupied_Housing_Units`: Number of occupied housing units.
@@ -133,11 +77,11 @@ These steps include the preparation of spatial data for the analysis of Colombo 
   - `Road_Density`: Density of roads in the area.
   - `Road_Length`: Total length of roads in the area.
 
-- **Geospatial Calculations:**
+- **Calculations:**
   - `Population_Density`: Population density per square kilometer.
-  - `Building_Area`: Area of buildings (units: square meters)
+  - `Building_Area`: Area of buildings (Square Meters)
 
-Furthermore all the datasets are clipped in to the Colombo district boundary to ensure that the analysis is focused on the relevant geographic area.
+Furthermore all the datasets are clipped in to the Colombo district boundary to ensure that the analysis is focused only for Colombo district.
 
 ```{r data_loading}
 # Load necessary libraries
@@ -151,7 +95,6 @@ library(spatstat)
 library(spdep)
 library(spatialreg)
 library(knitr)
-library(kableExtra)
 library(patchwork)
 
 # Improve figure clarity in rendered output
@@ -185,7 +128,7 @@ cmb_boundary <- st_union(cmb_gnds)
 cmb_census <- read.csv("data/cmb_census_2024.csv")
 
 # Join the census population data to the Colombo GNDs
-# Consider both the GND and DSD names
+# Consider both the GND and DSD names when Joining the attributes
 cmb_gnds <- cmb_gnds %>%
   mutate(
     GND_N = trimws(toupper(GND_N)),
@@ -250,7 +193,7 @@ st_write(cmb_build, gpkg_path, layer = "cmb_build", delete_layer = TRUE, quiet =
 cat("Number of GNDs loaded:", nrow(cmb_gnds), "\n")
 ```
 
-In this study mainly 02 main amenity categories are considered in the OSM dataset under the fclass attribute:
+In this study mainly 02 amenity categories are considered in the OSM dataset under the fclass attribute:
 
 - **Education Facilities:**
   - `school`
@@ -267,7 +210,7 @@ In this study mainly 02 main amenity categories are considered in the OSM datase
   - `veterinary`
   - `nursing_home`
 
-Then other POI categories are filtered out and only the above two categories are retained for the analysis. 
+Then other POI categories are filtered out and only the above two categories are kept for the study. 
 
 ```{r classify_pois}
 # Import Colombo POI data as points
@@ -288,22 +231,18 @@ cmb_poi <- cmb_poi %>%
     )) %>% filter(!is.na(amenity_type))
 
 # Perform a spatial join to associate GND_N with POIs
-cmb_poi_with_gnd <- st_join(cmb_poi, cmb_gnds %>% select(GND_N))
+cmb_poi <- st_join(cmb_poi, cmb_gnds %>% select(GND_N))
 
 # Check if the GND_N is correctly added to the POI data
-print(names(cmb_poi_with_gnd)) 
-head(cmb_poi_with_gnd)
+print(names(cmb_poi)) 
+head(cmb_poi)
 
 # Count education and healthcare POIs per GND
-poi_counts_by_gnd <- cmb_poi_with_gnd %>%
+poi_counts_by_gnd <- cmb_poi %>%
   st_drop_geometry() %>%
   group_by(GND_N, amenity_type) %>%
   summarise(count = n(), .groups = "drop") %>%
-  pivot_wider(names_from = amenity_type, values_from = count, values_fill = list(count = 0))
-
-
-# Keep only final count columns for a stable join schema
-poi_counts_by_gnd <- poi_counts_by_gnd %>%
+  pivot_wider(names_from = amenity_type, values_from = count, values_fill = list(count = 0)) %>%
   transmute(
     GND_N,
     education_count = as.integer(education),
@@ -925,8 +864,7 @@ m1 <- ggplot() +
     limits = c(-max(abs(cmb_reg$resid_edu), na.rm = TRUE), max(abs(cmb_reg$resid_edu), na.rm = TRUE))
   ) +
   labs(
-    title = "Education per 1000 - SEM Residuals",
-    subtitle = "No spatial pattern = model is valid"
+    title = "Education per 1000 - SEM Residuals"
   ) +
   theme_void(base_size = 12) +
   theme(
@@ -947,8 +885,7 @@ m2 <- ggplot() +
     limits = c(-max(abs(cmb_reg$resid_hlt), na.rm = TRUE), max(abs(cmb_reg$resid_hlt), na.rm = TRUE))
   ) +
   labs(
-    title = "Healthcare per 1000 - SEM Residuals",
-    subtitle = "No spatial pattern = model is valid"
+    title = "Healthcare per 1000 - SEM Residuals"
   ) +
   theme_void(base_size = 12) +
   theme(
